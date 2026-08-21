@@ -1,0 +1,16 @@
+# Clauddey — ufbt application manifest.
+# Build from this directory:  ufbt
+# Flash and run:              ufbt launch
+
+App(
+    appid="clauddey",
+    name="Clauddey",
+    apptype=FlipperAppType.EXTERNAL,
+    entry_point="clauddey_app",
+    stack_size=3 * 1024,
+    fap_icon="clauddey.png",
+    fap_category="Tools",
+    fap_version="0.1",
+    fap_author="Clauddey",
+    fap_description="Physical companion and remote for Claude and Cursor",
+)

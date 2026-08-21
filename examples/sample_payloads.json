@@ -1,0 +1,26 @@
+{
+  "cursor_raw_event": {
+    "provider": "cursor",
+    "event": "composer.state",
+    "status": "generating",
+    "message": "Generating code..."
+  },
+  "claude_raw_event": {
+    "provider": "claude",
+    "event": "cli.session",
+    "status": "waiting_for_input",
+    "message": "Waiting for approval"
+  },
+  "unified_status_to_flipper": {
+    "v": 1,
+    "agent": "cursor",
+    "status": "generating",
+    "msg": "Generating code..."
+  },
+  "interactive_command_from_flipper": {
+    "v": 1,
+    "cmd": "ok",
+    "agent": "cursor",
+    "mode": "interactive"
+  }
+}

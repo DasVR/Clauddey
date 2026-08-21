@@ -1,0 +1,26 @@
+# Flipper / ufbt
+flipper_app/dist/
+flipper_app/.vscode/
+flipper_app/.clangd
+*.fap
+*.elf
+.ufbt/
+compile_commands.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.env
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+
+# OS / editor
+.DS_Store
+.idea/
+*.swp
