@@ -22,7 +22,7 @@ from agents import ClaudeAgent, CursorAgent, UnifiedEvent
 from aggregator import Aggregator
 from protocol import parse_command
 from router import CommandRouter, os_dictation_hint
-from serial_link import SerialTransport, StdoutTransport, Transport, find_flipper_port
+from serial_link import SerialTransport, StdoutTransport, Transport
 
 DEMO_CURSOR_RAW = {
     "provider": "cursor",
@@ -89,16 +89,8 @@ def open_transport(port: str, baud: int, dry_run: bool) -> Transport:
         print("[bridge] dry-run serial (no device)")
         return StdoutTransport()
 
-    chosen = port
-    if port in ("auto", ""):
-        chosen = find_flipper_port() or ""
-        if not chosen:
-            raise SystemExit(
-                "No Flipper serial port found. Pass --port /dev/ttyACM1 "
-                "(use the second CDC interface) or --dry-run."
-            )
-        print(f"[bridge] auto-selected {chosen}")
-    return SerialTransport(chosen, baud=baud)
+    print("[bridge] USB serial will auto-reconnect if the Flipper is undocked")
+    return SerialTransport(port, baud=baud)
 
 
 def pump(agg: Aggregator, router: CommandRouter, transport: Transport) -> None:

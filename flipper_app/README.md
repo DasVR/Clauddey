@@ -15,17 +15,17 @@ Requires firmware that exports USB CDC (`furi_hal_cdc_*`). The app switches USB 
 
 ## UI
 
-1. **Menu** — Left/Right toggles Monitor vs Interactive. OK starts a session. Back exits.
+1. **Menu** — Left/Right cycles Monitor, Interact, and Silent. OK starts a session. Back exits.
 2. **Session** — Shows active agent, status, and a tiny log.
    - Back always returns to the menu (local only).
-   - Up/Down scroll the local log.
-   - In **Monitor** mode, OK / Left / Right / long-Up do nothing remote.
-   - In **Interactive** mode those keys emit a serial command through a single TX gate.
+   - In **Monitor** mode, Up/Down scroll the local log. OK / Left / Right / long-Up do nothing remote.
+   - In **Interactive** and **Silent** those keys emit a serial command through a single TX gate.
+   - Silent keeps LED/OLED feedback but never runs the vibration motor.
 
 ## Files
 
 | File | Role |
 |------|------|
-| `clauddey.c` | GUI, event loop, mode toggle, command gate |
-| `clauddey_protocol.c` | Tiny JSON field extractor (no heap) |
-| `clauddey_serial.c` | USB CDC worker thread (ISR only sets flags) |
+| `clauddey.c` | GUI, event loop, 3-way mode toggle, command gate |
+| `clauddey_protocol.c` | JSON extractor + 64-byte CDC line assembler |
+| `clauddey_serial.c` | USB CDC worker (ISR only sets flags; TX is chunked) |

@@ -43,8 +43,8 @@ void clauddey_serial_stop(ClauddeySerial* serial);
 bool clauddey_serial_is_connected(ClauddeySerial* serial);
 
 /**
- * Transmit one already-formatted command line.
- * Callers MUST go through the Interactive-mode gate in clauddey.c.
+ * Transmit one already-formatted command line, split into 64-byte CDC packets.
+ * Callers MUST go through the Interactive/Silent TX gate in clauddey.c.
  */
 bool clauddey_serial_tx(ClauddeySerial* serial, const char* line, size_t len);
 

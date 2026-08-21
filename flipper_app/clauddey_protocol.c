@@ -143,6 +143,49 @@ bool clauddey_parse_status(const char* json, ClauddeyStatusMsg* out) {
     return true;
 }
 
+void clauddey_line_reset(ClauddeyLineBuf* buf) {
+    if(!buf) return;
+    buf->len = 0;
+    buf->drop = false;
+    buf->data[0] = '\0';
+}
+
+void clauddey_line_feed_bytes(
+    ClauddeyLineBuf* buf,
+    const uint8_t* data,
+    size_t len,
+    ClauddeyLineCallback cb,
+    void* context) {
+    if(!buf || !data) return;
+
+    for(size_t i = 0; i < len; i++) {
+        char c = (char)data[i];
+        if(c == '\r') continue;
+
+        if(c == '\n') {
+            if(buf->drop) {
+                clauddey_line_reset(buf);
+                continue;
+            }
+            if(buf->len == 0) continue;
+            buf->data[buf->len] = '\0';
+            if(cb) cb(buf->data, context);
+            clauddey_line_reset(buf);
+            continue;
+        }
+
+        if(buf->drop) continue;
+
+        /* Leave a byte for the NUL we write when the line completes. */
+        if((size_t)buf->len + 1 >= sizeof(buf->data)) {
+            buf->drop = true;
+            buf->len = 0;
+            continue;
+        }
+        buf->data[buf->len++] = c;
+    }
+}
+
 size_t clauddey_format_command(char* out, size_t out_sz, ClauddeyCmd cmd, ClauddeyAgent agent) {
     if(!out || out_sz < 16 || cmd == ClauddeyCmdNone) return 0;
 

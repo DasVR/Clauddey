@@ -1,7 +1,10 @@
 # Clauddey serial protocol
 
-Newline-delimited JSON over USB CDC. Keep payloads ASCII and under 120 bytes so a Flipper
-can reassemble them from 64-byte USB packets without extra heap.
+Newline-delimited JSON over USB CDC. A status line such as
+`{"v":1,"agent":"cursor","status":"generating","msg":"Generating code..."}`
+is **longer than one 64-byte USB CDC packet**, so both ends keep a line buffer
+and only parse after `\n`. Partial frames survive across packets; a disconnect
+or overflow discards the half-line until the next newline.
 
 Default serial settings: **115200 8N1**. USB CDC ignores baud on the wire; 115200 is for
 host libraries and GPIO-UART fallbacks.
@@ -52,6 +55,10 @@ and must not record audio.
 ## Framing
 
 - One JSON object per line, terminated by `\n` (optional `\r` is ignored).
-- No pretty-print whitespace required.
-- If a line is truncated or overflows the Flipper RX buffer, it is dropped until the
-  next newline.
+- USB CDC delivers at most **64 bytes per packet**. Receivers MUST hold assembler
+  state across packets until `\n`.
+- Host and Flipper TX split writes into 64-byte chunks. A Flipper TX whose length
+  is an exact multiple of 64 is followed by a zero-length packet.
+- If a line overflows the 160-byte assembler, it is dropped until the next newline.
+- On USB disconnect the assembler is reset so a new session cannot splice onto a
+  leftover prefix.

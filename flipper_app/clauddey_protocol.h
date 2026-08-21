@@ -19,6 +19,29 @@ extern "C" {
 #define CLAUDDEY_MSG_MAX 40
 #define CLAUDDEY_LINE_MAX 160
 #define CLAUDDEY_TX_MAX 80
+/** USB CDC bulk packet size. Lines longer than this arrive in multiple RX events. */
+#define CLAUDDEY_CDC_PKT_SZ 64
+
+/**
+ * Stateful newline assembler. Holds a partial JSON line across 64-byte CDC
+ * packets until `\n`. On overflow, bytes are discarded until the next newline
+ * so a later well-formed line can resync.
+ */
+typedef struct {
+    char data[CLAUDDEY_LINE_MAX];
+    uint16_t len;
+    bool drop;
+} ClauddeyLineBuf;
+
+typedef void (*ClauddeyLineCallback)(const char* line, void* context);
+
+void clauddey_line_reset(ClauddeyLineBuf* buf);
+void clauddey_line_feed_bytes(
+    ClauddeyLineBuf* buf,
+    const uint8_t* data,
+    size_t len,
+    ClauddeyLineCallback cb,
+    void* context);
 
 typedef enum {
     ClauddeyAgentNone = 0,

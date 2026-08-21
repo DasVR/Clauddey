@@ -8,6 +8,8 @@ from typing import Any
 
 PROTOCOL_VERSION = 1
 MAX_MSG_LEN = 40
+CDC_PACKET_SIZE = 64
+LINE_MAX = 160
 
 AGENTS = ("none", "cursor", "claude")
 STATUSES = ("idle", "thinking", "generating", "waiting", "done", "error")
@@ -88,3 +90,38 @@ def parse_command(line: str) -> FlipperCommand | None:
         agent=normalize_agent(str(data.get("agent", "none"))),
         mode=str(data.get("mode", "")).strip().lower(),
     )
+
+
+class LineAssembler:
+    """Hold a partial newline-delimited frame across 64-byte USB CDC packets."""
+
+    def __init__(self, max_len: int = LINE_MAX) -> None:
+        self.max_len = max_len
+        self._buf = bytearray()
+        self._drop = False
+
+    def reset(self) -> None:
+        self._buf.clear()
+        self._drop = False
+
+    def feed(self, chunk: bytes) -> list[str]:
+        lines: list[str] = []
+        for byte in chunk:
+            if byte == 13:  # '\r'
+                continue
+            if byte == 10:  # '\n'
+                if self._drop:
+                    self.reset()
+                    continue
+                if self._buf:
+                    lines.append(self._buf.decode("ascii", errors="replace"))
+                self.reset()
+                continue
+            if self._drop:
+                continue
+            if len(self._buf) + 1 >= self.max_len:
+                self._drop = True
+                self._buf.clear()
+                continue
+            self._buf.append(byte)
+        return lines

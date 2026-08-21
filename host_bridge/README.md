@@ -30,6 +30,10 @@ With a Flipper running the Clauddey FAP (CDC interface 1, usually `ttyACM1`):
 python3 bridge.py --port auto --demo --listen
 ```
 
+The bridge auto-reconnects if the Flipper is unplugged or the Python process
+loses the CDC port. ACM/COM numbers are rediscovered on each attempt, and the
+last status payload is replayed after a successful open.
+
 ## Dummy vs real agents
 
 `CursorAgent.parse_raw` and `ClaudeAgent.parse_raw` already normalize the mock

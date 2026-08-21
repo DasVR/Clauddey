@@ -4,8 +4,12 @@
  *
  * Pattern matches the official USB-UART bridge:
  *   - ISR callback sets a thread flag
- *   - worker thread reads CDC into a line buffer
- *   - complete lines are parsed and posted to the GUI queue (0 timeout)
+ *   - worker thread reads CDC into a line buffer that survives 64-byte packets
+ *   - complete lines (newline-delimited) are parsed and posted to the GUI queue
+ *
+ * TX is chunked to CDC_DATA_SZ and waits for the endpoint complete callback
+ * before the next packet, including a zero-length packet when the payload is
+ * an exact multiple of 64.
  */
 #include "clauddey_serial.h"
 
@@ -16,7 +20,6 @@
 #define TAG "ClauddeySerial"
 
 #define WORKER_STACK 1024
-#define RX_ACCUM_MAX CLAUDDEY_LINE_MAX
 
 typedef enum {
     WorkerEvtStop = (1 << 0),
@@ -28,11 +31,11 @@ struct ClauddeySerial {
     FuriThread* thread;
     FuriMessageQueue* events;
     FuriMutex* mutex;
+    FuriSemaphore* tx_sem;
     FuriHalUsbInterface* usb_if_prev;
+    ClauddeyLineBuf line;
     volatile bool running;
     volatile bool connected;
-    char accum[RX_ACCUM_MAX];
-    size_t accum_len;
 };
 
 static void clauddey_post_link(ClauddeySerial* s, bool connected) {
@@ -44,8 +47,19 @@ static void clauddey_post_link(ClauddeySerial* s, bool connected) {
     furi_message_queue_put(s->events, &ev, 0);
 }
 
+static void clauddey_on_line(const char* line, void* context) {
+    ClauddeySerial* s = context;
+    ClauddeyEvent ev = {.type = ClauddeyEventTypeStatus};
+    if(clauddey_parse_status(line, &ev.status)) {
+        furi_message_queue_put(s->events, &ev, 0);
+    } else {
+        FURI_LOG_D(TAG, "drop bad json");
+    }
+}
+
 static void clauddey_cdc_tx_complete(void* context) {
-    UNUSED(context);
+    ClauddeySerial* s = context;
+    furi_semaphore_release(s->tx_sem);
 }
 
 static void clauddey_cdc_rx(void* context) {
@@ -87,34 +101,6 @@ static CdcCallbacks clauddey_cdc_cb = {
     .config_callback = clauddey_cdc_config,
 };
 
-static void clauddey_feed_bytes(ClauddeySerial* s, const uint8_t* data, size_t len) {
-    for(size_t i = 0; i < len; i++) {
-        char c = (char)data[i];
-        if(c == '\r') continue;
-
-        if(c == '\n') {
-            if(s->accum_len > 0) {
-                s->accum[s->accum_len] = '\0';
-                ClauddeyEvent ev = {.type = ClauddeyEventTypeStatus};
-                if(clauddey_parse_status(s->accum, &ev.status)) {
-                    furi_message_queue_put(s->events, &ev, 0);
-                } else {
-                    FURI_LOG_D(TAG, "drop bad json (%u B)", (unsigned)s->accum_len);
-                }
-            }
-            s->accum_len = 0;
-            continue;
-        }
-
-        if(s->accum_len + 1 >= sizeof(s->accum)) {
-            /* Overflow: discard until the next newline so we resync. */
-            s->accum_len = 0;
-            continue;
-        }
-        s->accum[s->accum_len++] = c;
-    }
-}
-
 static int32_t clauddey_serial_worker(void* context) {
     ClauddeySerial* s = context;
     uint8_t pkt[CDC_DATA_SZ];
@@ -126,7 +112,10 @@ static int32_t clauddey_serial_worker(void* context) {
         return -1;
     }
     furi_hal_cdc_set_callbacks(CLAUDDEY_CDC_IF, &clauddey_cdc_cb, s);
-    FURI_LOG_I(TAG, "CDC%u up", (unsigned)CLAUDDEY_CDC_IF);
+    FURI_LOG_I(TAG, "CDC%u up (pkt %u B, line max %u B)",
+               (unsigned)CLAUDDEY_CDC_IF,
+               (unsigned)CDC_DATA_SZ,
+               (unsigned)CLAUDDEY_LINE_MAX);
 
     while(s->running) {
         uint32_t flags = furi_thread_flags_wait(
@@ -141,16 +130,20 @@ static int32_t clauddey_serial_worker(void* context) {
         if(flags & WorkerEvtStop) break;
 
         if(flags & WorkerEvtLink) {
+            if(!s->connected) {
+                /* Drop a half-line so the next host session cannot splice onto it. */
+                clauddey_line_reset(&s->line);
+            }
             clauddey_post_link(s, s->connected);
         }
 
         if(flags & WorkerEvtCdcRx) {
             if(furi_mutex_acquire(s->mutex, 50) != FuriStatusOk) continue;
-            /* Flags coalesce: drain every pending 64-byte packet. */
+            /* Flags coalesce: drain every pending 64-byte packet into the assembler. */
             while(true) {
                 int32_t n = furi_hal_cdc_receive(CLAUDDEY_CDC_IF, pkt, sizeof(pkt));
                 if(n <= 0) break;
-                clauddey_feed_bytes(s, pkt, (size_t)n);
+                clauddey_line_feed_bytes(&s->line, pkt, (size_t)n, clauddey_on_line, s);
             }
             furi_mutex_release(s->mutex);
         }
@@ -170,17 +163,19 @@ ClauddeySerial* clauddey_serial_alloc(FuriMessageQueue* events) {
     ClauddeySerial* s = malloc(sizeof(ClauddeySerial));
     s->events = events;
     s->mutex = furi_mutex_alloc(FuriMutexTypeNormal);
+    s->tx_sem = furi_semaphore_alloc(1, 1);
     s->thread = NULL;
     s->usb_if_prev = NULL;
     s->running = false;
     s->connected = false;
-    s->accum_len = 0;
+    clauddey_line_reset(&s->line);
     return s;
 }
 
 void clauddey_serial_free(ClauddeySerial* serial) {
     if(!serial) return;
     clauddey_serial_stop(serial);
+    furi_semaphore_free(serial->tx_sem);
     furi_mutex_free(serial->mutex);
     free(serial);
 }
@@ -211,15 +206,34 @@ bool clauddey_serial_is_connected(ClauddeySerial* serial) {
 bool clauddey_serial_tx(ClauddeySerial* serial, const char* line, size_t len) {
     if(!serial || !line || len == 0) return false;
     if(!serial->connected) return false;
-    if(len > CDC_DATA_SZ) {
-        /* v1 commands fit in one 64-byte packet; refuse anything larger. */
-        FURI_LOG_W(TAG, "tx too long (%u)", (unsigned)len);
-        return false;
+
+    size_t offset = 0;
+    while(offset < len) {
+        uint16_t chunk = (uint16_t)(len - offset);
+        if(chunk > CDC_DATA_SZ) chunk = CDC_DATA_SZ;
+
+        if(furi_semaphore_acquire(serial->tx_sem, 100) != FuriStatusOk) {
+            FURI_LOG_W(TAG, "tx timeout");
+            return false;
+        }
+        if(furi_mutex_acquire(serial->mutex, 50) != FuriStatusOk) {
+            furi_semaphore_release(serial->tx_sem);
+            return false;
+        }
+        furi_hal_cdc_send(CLAUDDEY_CDC_IF, (uint8_t*)(line + offset), chunk);
+        furi_mutex_release(serial->mutex);
+        offset += chunk;
     }
 
-    if(furi_mutex_acquire(serial->mutex, 50) != FuriStatusOk) return false;
-    /* furi_hal_cdc_send copies internally; the const cast is API-safe. */
-    furi_hal_cdc_send(CLAUDDEY_CDC_IF, (uint8_t*)line, (uint16_t)len);
-    furi_mutex_release(serial->mutex);
+    /* USB CDC: a full-sized last packet needs a ZLP to mark end-of-transfer. */
+    if((len % CDC_DATA_SZ) == 0) {
+        if(furi_semaphore_acquire(serial->tx_sem, 100) != FuriStatusOk) return false;
+        if(furi_mutex_acquire(serial->mutex, 50) != FuriStatusOk) {
+            furi_semaphore_release(serial->tx_sem);
+            return false;
+        }
+        furi_hal_cdc_send(CLAUDDEY_CDC_IF, NULL, 0);
+        furi_mutex_release(serial->mutex);
+    }
     return true;
 }

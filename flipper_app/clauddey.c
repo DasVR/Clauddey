@@ -1,6 +1,6 @@
 /**
  * @file clauddey.c
- * @brief Clauddey GUI: Monitor / Interactive toggle and the remote-command gate.
+ * @brief Clauddey GUI: three-way mode carousel and the remote-command gate.
  *
  * State machine (all remote TX goes through clauddey_try_send_command):
  *
@@ -8,9 +8,10 @@
  *      ^               |
  *      +----- Back ----+
  *
- *   MENU:        Left/Right toggles mode. No serial commands.
+ *   MENU:        Left/Right cycles Monitor / Interact / Silent. No serial TX.
  *   SESSION+MON: Back exits, Up/Down scroll logs. Buttons never TX.
- *   SESSION+INT: same local UI, plus OK/Left/Right/long-Up emit commands.
+ *   SESSION+INT: visuals + haptics + D-Pad/OK macros.
+ *   SESSION+SIL: same macros as Interact, LED/OLED only (motor stays off).
  */
 
 #include "clauddey_protocol.h"
@@ -35,6 +36,8 @@
 typedef enum {
     ClauddeyModeMonitor = 0,
     ClauddeyModeInteractive = 1,
+    ClauddeyModeSilent = 2,
+    ClauddeyModeCount = 3,
 } ClauddeyMode;
 
 typedef enum {
@@ -89,9 +92,17 @@ static const NotificationSequence seq_task_done = {
     &message_display_backlight_on,
     &message_green_255,
     &message_vibro_on,
-    &message_delay_500,
+    &message_delay_100,
     &message_vibro_off,
-    &message_delay_250,
+    &message_delay_100,
+    &message_green_0,
+    NULL,
+};
+
+static const NotificationSequence seq_task_done_quiet = {
+    &message_display_backlight_on,
+    &message_green_255,
+    &message_delay_100,
     &message_green_0,
     NULL,
 };
@@ -110,6 +121,12 @@ static const NotificationSequence seq_error = {
     &message_vibro_on,
     &message_delay_100,
     &message_vibro_off,
+    NULL,
+};
+
+static const NotificationSequence seq_error_quiet = {
+    &message_display_backlight_on,
+    &message_red_255,
     NULL,
 };
 
@@ -139,6 +156,73 @@ static const NotificationSequence seq_reset_leds = {
     NULL,
 };
 
+static const NotificationSequence seq_vibro_off = {
+    &message_vibro_off,
+    NULL,
+};
+
+static bool clauddey_mode_can_tx(ClauddeyMode mode) {
+    return mode == ClauddeyModeInteractive || mode == ClauddeyModeSilent;
+}
+
+static bool clauddey_mode_vibro(ClauddeyMode mode) {
+    return mode != ClauddeyModeSilent;
+}
+
+static const char* clauddey_mode_title(ClauddeyMode mode) {
+    switch(mode) {
+    case ClauddeyModeInteractive:
+        return "INTERACT";
+    case ClauddeyModeSilent:
+        return "SILENT";
+    default:
+        return "MONITOR";
+    }
+}
+
+static const char* clauddey_mode_hint(ClauddeyMode mode) {
+    switch(mode) {
+    case ClauddeyModeInteractive:
+        return "controls + haptics";
+    case ClauddeyModeSilent:
+        return "controls, no motor";
+    default:
+        return "visuals + haptics";
+    }
+}
+
+static const char* clauddey_mode_badge(ClauddeyMode mode) {
+    switch(mode) {
+    case ClauddeyModeInteractive:
+        return "INT";
+    case ClauddeyModeSilent:
+        return "SIL";
+    default:
+        return "MON";
+    }
+}
+
+static const char* clauddey_mode_log_label(ClauddeyMode mode) {
+    switch(mode) {
+    case ClauddeyModeInteractive:
+        return "interactive on";
+    case ClauddeyModeSilent:
+        return "silent interact";
+    default:
+        return "monitor only";
+    }
+}
+
+static void clauddey_cycle_mode(ClauddeyApp* app, int delta) {
+    int next = ((int)app->mode + delta) % (int)ClauddeyModeCount;
+    if(next < 0) next += (int)ClauddeyModeCount;
+    app->mode = (ClauddeyMode)next;
+    if(!clauddey_mode_vibro(app->mode)) {
+        notification_message(app->notes, &seq_vibro_off);
+    }
+    FURI_LOG_I(TAG, "mode=%s", clauddey_mode_title(app->mode));
+}
+
 static void clauddey_apply_agent_led(ClauddeyApp* app, ClauddeyAgent agent) {
     if(agent == ClauddeyAgentCursor) {
         notification_message(app->notes, &seq_cursor_id);
@@ -159,20 +243,21 @@ static void clauddey_apply_feedback(ClauddeyApp* app, const ClauddeyStatusMsg* m
 
     notification_message(app->notes, &sequence_display_backlight_on);
 
+    const bool vibro = clauddey_mode_vibro(app->mode);
     switch(msg->status) {
     case ClauddeyStatusDone:
-        notification_message(app->notes, &seq_task_done);
+        notification_message(app->notes, vibro ? &seq_task_done : &seq_task_done_quiet);
         break;
     case ClauddeyStatusError:
-        notification_message(app->notes, &seq_error);
+        notification_message(app->notes, vibro ? &seq_error : &seq_error_quiet);
         break;
     case ClauddeyStatusWaiting:
-        notification_message(app->notes, &seq_waiting);
+        if(vibro) notification_message(app->notes, &seq_waiting);
         clauddey_apply_agent_led(app, msg->agent);
         break;
     case ClauddeyStatusThinking:
     case ClauddeyStatusGenerating:
-        notification_message(app->notes, &seq_thinking);
+        if(vibro) notification_message(app->notes, &seq_thinking);
         clauddey_apply_agent_led(app, msg->agent);
         break;
     default:
@@ -216,13 +301,13 @@ static void clauddey_log_status(ClauddeyApp* app, const ClauddeyStatusMsg* msg) 
  * HARD GATE.
  * Remote commands are legal only while ALL of these are true:
  *   1. We are on the session screen (not the mode menu)
- *   2. Operating mode is Interactive
+ *   2. Operating mode is Interactive or Silent Interactive
  *   3. The host CDC port is open
  *
  * Monitor mode has no other TX call sites. Do not add any.
  */
 static bool clauddey_commands_allowed(const ClauddeyApp* app) {
-    return app->screen == ClauddeyScreenSession && app->mode == ClauddeyModeInteractive &&
+    return app->screen == ClauddeyScreenSession && clauddey_mode_can_tx(app->mode) &&
            app->host_connected;
 }
 
@@ -284,29 +369,17 @@ static void clauddey_draw_menu(Canvas* canvas, ClauddeyApp* app) {
     canvas_set_font(canvas, FontPrimary);
     canvas_draw_str_aligned(canvas, 64, 10, AlignCenter, AlignBottom, "Clauddey");
 
+    canvas_draw_rframe(canvas, 14, 14, 100, 22, 3);
+    canvas_draw_str_aligned(canvas, 22, 29, AlignCenter, AlignBottom, "<");
+    canvas_draw_str_aligned(canvas, 106, 29, AlignCenter, AlignBottom, ">");
+    canvas_draw_str_aligned(canvas, 64, 29, AlignCenter, AlignBottom, clauddey_mode_title(app->mode));
+
     canvas_set_font(canvas, FontSecondary);
-    canvas_draw_str_aligned(canvas, 64, 22, AlignCenter, AlignBottom, "AI companion remote");
-
-    const bool interactive = (app->mode == ClauddeyModeInteractive);
-    canvas_draw_rframe(canvas, 18, 26, 92, 16, 3);
-    if(interactive) {
-        canvas_draw_rbox(canvas, 64, 27, 45, 14, 3);
-        canvas_set_color(canvas, ColorWhite);
-        canvas_draw_str_aligned(canvas, 86, 37, AlignCenter, AlignBottom, "INTERACT");
-        canvas_set_color(canvas, ColorBlack);
-        canvas_draw_str_aligned(canvas, 40, 37, AlignCenter, AlignBottom, "MONITOR");
-    } else {
-        canvas_draw_rbox(canvas, 19, 27, 45, 14, 3);
-        canvas_set_color(canvas, ColorWhite);
-        canvas_draw_str_aligned(canvas, 41, 37, AlignCenter, AlignBottom, "MONITOR");
-        canvas_set_color(canvas, ColorBlack);
-        canvas_draw_str_aligned(canvas, 86, 37, AlignCenter, AlignBottom, "INTERACT");
-    }
-
+    canvas_draw_str_aligned(canvas, 64, 42, AlignCenter, AlignBottom, clauddey_mode_hint(app->mode));
     canvas_draw_str_aligned(
         canvas,
         64,
-        50,
+        52,
         AlignCenter,
         AlignBottom,
         app->host_connected ? "Host linked" : "Host offline");
@@ -329,14 +402,13 @@ static void clauddey_draw_fit(Canvas* canvas, uint8_t x, uint8_t y, const char* 
 }
 
 static void clauddey_draw_session(Canvas* canvas, ClauddeyApp* app) {
-    const bool interactive = (app->mode == ClauddeyModeInteractive);
+    const bool remote = clauddey_mode_can_tx(app->mode);
 
     canvas_draw_box(canvas, 0, 0, 128, 12);
     canvas_set_color(canvas, ColorWhite);
     canvas_set_font(canvas, FontSecondary);
     canvas_draw_str(canvas, 2, 10, clauddey_agent_label(app->status.agent));
-    canvas_draw_str_aligned(
-        canvas, 126, 10, AlignRight, AlignBottom, interactive ? "INT" : "MON");
+    canvas_draw_str_aligned(canvas, 126, 10, AlignRight, AlignBottom, clauddey_mode_badge(app->mode));
     canvas_set_color(canvas, ColorBlack);
 
     canvas_set_font(canvas, FontPrimary);
@@ -350,7 +422,7 @@ static void clauddey_draw_session(Canvas* canvas, ClauddeyApp* app) {
     /* Newest log at the bottom of the window; scroll moves the window up.
      * Interactive mode draws button hints on the last row, so show one fewer line. */
     uint8_t shown = app->log_count;
-    uint8_t max_shown = interactive ? 2 : 3;
+    uint8_t max_shown = remote ? 2 : 3;
     if(shown > max_shown) shown = max_shown;
     int start = (int)app->log_count - (int)shown - (int)app->log_scroll;
     if(start < 0) start = 0;
@@ -360,7 +432,7 @@ static void clauddey_draw_session(Canvas* canvas, ClauddeyApp* app) {
         canvas_draw_str(canvas, 2, (uint8_t)(38 + i * 8), app->logs[idx]);
     }
 
-    if(interactive) {
+    if(remote) {
         elements_button_left(canvas, "Esc");
         elements_button_center(canvas, "OK");
         elements_button_right(canvas, "Act");
@@ -402,14 +474,13 @@ static void clauddey_handle_menu_input(ClauddeyApp* app, const InputEvent* ev) {
     }
     if(ev->type != InputTypeShort) return;
 
-    if(ev->key == InputKeyLeft || ev->key == InputKeyRight) {
-        app->mode = (app->mode == ClauddeyModeMonitor) ? ClauddeyModeInteractive :
-                                                         ClauddeyModeMonitor;
-        FURI_LOG_I(TAG, "mode=%s", app->mode == ClauddeyModeInteractive ? "INT" : "MON");
+    if(ev->key == InputKeyLeft) {
+        clauddey_cycle_mode(app, -1);
+    } else if(ev->key == InputKeyRight) {
+        clauddey_cycle_mode(app, 1);
     } else if(ev->key == InputKeyOk) {
         app->screen = ClauddeyScreenSession;
-        clauddey_log_push(
-            app, app->mode == ClauddeyModeInteractive ? "interactive on" : "monitor only");
+        clauddey_log_push(app, clauddey_mode_log_label(app->mode));
     }
 }
 
@@ -422,9 +493,10 @@ static void clauddey_handle_session_input(ClauddeyApp* app, const InputEvent* ev
 
     /*
      * Monitor latch: visuals/haptics stay live, but D-Pad/OK cannot reach TX.
-     * Up/Down only scroll the local log.
+     * Silent Interactive uses the same remote path as Interactive, without vibro.
+     * Up/Down only scroll the local log while TX is disallowed.
      */
-    if(app->mode != ClauddeyModeInteractive) {
+    if(!clauddey_mode_can_tx(app->mode)) {
         if(ev->type == InputTypeShort || ev->type == InputTypeRepeat) {
             if(ev->key == InputKeyUp && app->log_scroll + 1 < app->log_count) {
                 app->log_scroll++;
@@ -435,8 +507,8 @@ static void clauddey_handle_session_input(ClauddeyApp* app, const InputEvent* ev
         return;
     }
 
-    /* Interactive: D-Pad and OK are remote macros. The TX gate still checks
-     * screen + mode + host link before any byte is written. */
+    /* Interactive / Silent: D-Pad and OK are remote macros. The TX gate still
+     * checks screen + mode + host link before any byte is written. */
     if(ev->type == InputTypeLong && ev->key == InputKeyUp) {
         clauddey_try_send_command(app, ClauddeyCmdDictate);
         return;

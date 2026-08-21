@@ -21,14 +21,15 @@ examples/             Sample Cursor / Claude payloads
 
 ## Operating modes
 
-The Flipper menu is a two-position toggle:
+The Flipper menu Left/Right cycles three modes:
 
-| Mode | Visuals / haptics | Hardware buttons |
-|------|-------------------|------------------|
-| **Monitor** | Agent name, status, LED color (blue Cursor / purple Claude), vibro on transitions | Local UI only: scroll logs, return to menu. **No commands leave the device.** |
-| **Interactive** | Same feedback | D-Pad / OK send context-aware macros to the host. Long-Up starts **host** dictation (Flipper has no mic). |
+| Mode | Visuals | Motor | Hardware buttons |
+|------|---------|-------|------------------|
+| **Monitor** | Agent name, status, LED (blue Cursor / purple Claude) | Short pulses on waiting / done / error | Local UI only: scroll logs, return to menu. **No commands leave the device.** |
+| **Interactive** | Same | Same short haptics | D-Pad / OK send context-aware macros. Long-Up starts **host** dictation. |
+| **Silent Interactive** | Same LED / OLED | **Off** (saves battery, no buzzing) | Same macros as Interactive. |
 
-Remote TX is isolated by a single C function (`clauddey_try_send_command`) plus a host-side check that drops any frame without `"mode":"interactive"`.
+Remote TX is isolated by a single C function (`clauddey_try_send_command`) plus a host-side check that drops any frame without `"mode":"interactive"`. Silent still sends `mode=interactive` because silence is a local haptic setting.
 
 ## Quick start
 
@@ -66,6 +67,10 @@ On hardware, start the FAP first (so CDC1 appears), then:
 python3 bridge.py --port auto --demo --listen
 ```
 
+The bridge keeps running if you undock the Flipper. It backs off, rediscovers the
+CDC port (ACM numbers often change), and replays the last status so the OLED
+catches up.
+
 Button mapping (Interactive, routed by whichever agent is active):
 
 | Flipper key | Cursor | Claude |
@@ -78,6 +83,6 @@ Button mapping (Interactive, routed by whichever agent is active):
 
 ## Memory / threading notes
 
-Flipper: no heap during JSON parse; fixed log lines; CDC ISR only sets thread flags; GUI redraws are `view_port_update` from the app thread; the draw callback holds a mutex for ≤25 ms and skips the frame if busy.
+Flipper: no heap during JSON parse; a 160-byte line assembler spans 64-byte CDC packets until newline; GUI redraws are `view_port_update` from the app thread; the draw callback holds a mutex for ≤25 ms and skips the frame if busy.
 
-Host: serial reads run on a daemon thread; the main loop never blocks on `read()`.
+Host: serial reads run on a daemon thread; writes are chunked to 64 bytes; disconnects trigger an auto-reconnect loop rather than killing the process.
