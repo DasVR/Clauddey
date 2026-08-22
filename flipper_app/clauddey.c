@@ -18,7 +18,6 @@
 #include "clauddey_serial.h"
 
 #include <furi.h>
-#include <stdio.h>
 #include <string.h>
 #include <gui/gui.h>
 #include <gui/view_port.h>
@@ -246,10 +245,19 @@ static void clauddey_apply_feedback(ClauddeyApp* app, const ClauddeyStatusMsg* m
     const bool vibro = clauddey_mode_vibro(app->mode);
     switch(msg->status) {
     case ClauddeyStatusDone:
-        notification_message(app->notes, vibro ? &seq_task_done : &seq_task_done_quiet);
+        /* Sequences have different lengths; GCC rejects a ternary of &array. */
+        if(vibro) {
+            notification_message(app->notes, &seq_task_done);
+        } else {
+            notification_message(app->notes, &seq_task_done_quiet);
+        }
         break;
     case ClauddeyStatusError:
-        notification_message(app->notes, vibro ? &seq_error : &seq_error_quiet);
+        if(vibro) {
+            notification_message(app->notes, &seq_error);
+        } else {
+            notification_message(app->notes, &seq_error_quiet);
+        }
         break;
     case ClauddeyStatusWaiting:
         if(vibro) notification_message(app->notes, &seq_waiting);
@@ -288,7 +296,16 @@ static void clauddey_log_status(ClauddeyApp* app, const ClauddeyStatusMsg* msg) 
                           "CUR" :
                           (msg->agent == ClauddeyAgentClaude) ? "CLD" : "---";
     const char* body = msg->msg[0] ? msg->msg : clauddey_status_str(msg->status);
-    snprintf(line, sizeof(line), "%s %s", who, body);
+    /* who is 3 chars + space; remaining columns hold a clipped body. */
+    size_t n = 0;
+    line[n++] = who[0];
+    line[n++] = who[1];
+    line[n++] = who[2];
+    line[n++] = ' ';
+    while(n < LOG_COLS && *body) {
+        line[n++] = *body++;
+    }
+    line[n] = '\0';
     clauddey_log_push(app, line);
     app->log_scroll = 0;
 }
