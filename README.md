@@ -105,6 +105,38 @@ sudo usermod -aG dialout "$USER"
 groups
 ```
 
+#### Windows: `PermissionError` / Access is denied on COMx
+
+`ufbt launch` talks to the Flipper CLI COM port. Windows gives **exclusive** access
+to one program at a time, so this fails if anything else already opened that port
+(qFlipper, a previous `bridge.py`, PuTTY, Arduino Serial Monitor, lab.flipper.net,
+another `ufbt`).
+
+1. Fully quit **qFlipper** (tray icon too) and stop `python bridge.py` if it is running.
+2. Unlock the Flipper and leave it on the home screen (not inside Clauddey) so USB is
+   still the stock single CDC / CLI port.
+3. In PowerShell, see who is using the port (replace `COM5` with the port in the error):
+
+   ```powershell
+   Get-Process qFlipper, python, python3, putty -ErrorAction SilentlyContinue
+   ```
+
+4. Unplug the Flipper, wait two seconds, plug it back in, then retry:
+
+   ```powershell
+   py -m ufbt launch
+   ```
+
+5. If it still fails, in Device Manager expand **Ports (COM & LPT)**, note both Flipper
+   COM numbers, and launch against the CLI port explicitly:
+
+   ```powershell
+   py -m ufbt launch -p COM4
+   ```
+
+   Use the **lower** COM of the pair for `ufbt`. Clauddey’s host bridge uses the
+   **higher** COM once the FAP is running.
+
 #### Finding the port
 
 | OS | Typical ports | Which one |
