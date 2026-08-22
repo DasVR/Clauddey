@@ -12,6 +12,9 @@ a Flipper Zero FAP plus a Python host bridge over USB serial.
 
 ## Install
 
+- **Windows (PowerShell, COM ports, `ufbt launch`):** see **[INSTALL_WINDOWS.md](INSTALL_WINDOWS.md)**
+- Linux / macOS: follow the steps below
+
 You need a Flipper Zero on **official firmware**, Python **3.10+**, and `git`.
 Build the FAP against the same firmware channel the device is running
 (`release` in the commands below).
