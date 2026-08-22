@@ -7,13 +7,19 @@ Lightweight Python service that:
 3. Writes that line to the Flipper over USB CDC
 4. Reads Flipper button commands and routes shortcuts by active agent
 
-## Setup
+Full clone-to-run steps (including Linux `dialout` and Windows COM notes) are in
+the [root README install section](../README.md#install).
+
+## Install
+
+Python 3.10+ and `pip`:
 
 ```bash
 cd host_bridge
 python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+source .venv/bin/activate          # Windows: .venv\Scripts\activate.bat
+python3 -m pip install --upgrade pip
+python3 -m pip install -r requirements.txt
 ```
 
 ## Run
