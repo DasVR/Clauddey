@@ -108,14 +108,23 @@ groups
 #### Windows: `ufbt launch` and COM ports
 
 `py -m ufbt launch` has **no `-p COM4` flag**. Extra tokens are treated as scons
-targets (`Do not know how to make File target COM4`). Let ufbt auto-pick the port:
+targets. The real override is a scons variable:
 
 ```powershell
 py -m ufbt launch
+# if it says "More than one Flipper is attached":
+py -m ufbt launch FLIP_PORT=COM5
 ```
 
 Quit **qFlipper** (tray icon too) first. Windows gives a COM port to only one
 program at a time.
+
+**While Clauddey is running it enables dual CDC**, so Windows shows **two** Flipper
+COM ports and `ufbt` auto-detect errors with `More than one Flipper is attached`.
+That is one Flipper, not two. On the device press **Back** until you are on the
+home screen (Clauddey must fully exit), then `py -m ufbt launch` again. Or pass
+`FLIP_PORT=` for the **lower** COM of the pair (the CLI). The host bridge uses
+the **higher** COM after Clauddey is running.
 
 If the log shows `Installing` / `Launching app` and then:
 
@@ -123,14 +132,8 @@ If the log shows `Installing` / `Launching app` and then:
 ClearCommError failed (PermissionError(13, 'The device does not recognize the command.'))
 ```
 
-the FAP **did install and start**. Clauddey switches USB to dual CDC, so the old
-COM handle dies. Look at the Flipper screen; open **Apps → Tools → Clauddey** if
-it is not already up. Then run the host bridge on the **new** second COM port
-(Device Manager will show a pair).
-
-Current Clauddey waits ~1.5s after launch before changing USB so `ufbt launch`
-can exit cleanly. Pull latest `main` and rebuild if you still hit ClearCommError
-on every launch.
+the FAP **did install and start**. Look at the Flipper; open **Apps → Tools → Clauddey**
+if needed. Then point the host bridge at the second COM port.
 
 #### Finding the port
 
