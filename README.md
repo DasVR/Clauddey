@@ -105,37 +105,32 @@ sudo usermod -aG dialout "$USER"
 groups
 ```
 
-#### Windows: `PermissionError` / Access is denied on COMx
+#### Windows: `ufbt launch` and COM ports
 
-`ufbt launch` talks to the Flipper CLI COM port. Windows gives **exclusive** access
-to one program at a time, so this fails if anything else already opened that port
-(qFlipper, a previous `bridge.py`, PuTTY, Arduino Serial Monitor, lab.flipper.net,
-another `ufbt`).
+`py -m ufbt launch` has **no `-p COM4` flag**. Extra tokens are treated as scons
+targets (`Do not know how to make File target COM4`). Let ufbt auto-pick the port:
 
-1. Fully quit **qFlipper** (tray icon too) and stop `python bridge.py` if it is running.
-2. Unlock the Flipper and leave it on the home screen (not inside Clauddey) so USB is
-   still the stock single CDC / CLI port.
-3. In PowerShell, see who is using the port (replace `COM5` with the port in the error):
+```powershell
+py -m ufbt launch
+```
 
-   ```powershell
-   Get-Process qFlipper, python, python3, putty -ErrorAction SilentlyContinue
-   ```
+Quit **qFlipper** (tray icon too) first. Windows gives a COM port to only one
+program at a time.
 
-4. Unplug the Flipper, wait two seconds, plug it back in, then retry:
+If the log shows `Installing` / `Launching app` and then:
 
-   ```powershell
-   py -m ufbt launch
-   ```
+```
+ClearCommError failed (PermissionError(13, 'The device does not recognize the command.'))
+```
 
-5. If it still fails, in Device Manager expand **Ports (COM & LPT)**, note both Flipper
-   COM numbers, and launch against the CLI port explicitly:
+the FAP **did install and start**. Clauddey switches USB to dual CDC, so the old
+COM handle dies. Look at the Flipper screen; open **Apps → Tools → Clauddey** if
+it is not already up. Then run the host bridge on the **new** second COM port
+(Device Manager will show a pair).
 
-   ```powershell
-   py -m ufbt launch -p COM4
-   ```
-
-   Use the **lower** COM of the pair for `ufbt`. Clauddey’s host bridge uses the
-   **higher** COM once the FAP is running.
+Current Clauddey waits ~1.5s after launch before changing USB so `ufbt launch`
+can exit cleanly. Pull latest `main` and rebuild if you still hit ClearCommError
+on every launch.
 
 #### Finding the port
 

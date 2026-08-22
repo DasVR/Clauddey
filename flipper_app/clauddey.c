@@ -31,6 +31,8 @@
 
 #define LOG_LINES 4
 #define LOG_COLS 21
+/* Give ufbt launch time to close the CLI COM port before we re-enumerate USB. */
+#define CLAUDDEY_CDC_DEFER_MS 1500
 
 typedef enum {
     ClauddeyModeMonitor = 0,
@@ -56,6 +58,7 @@ typedef struct {
     ClauddeyScreen screen;
     bool running;
     bool host_connected;
+    bool serial_started;
 
     ClauddeyStatusMsg status;
     ClauddeyStatus last_feedback_status;
@@ -65,6 +68,8 @@ typedef struct {
     uint8_t log_count;
     uint8_t log_scroll; /* 0 = show newest */
 } ClauddeyApp;
+
+static void clauddey_ensure_serial(ClauddeyApp* app);
 
 /* -------------------------------------------------------------------------- */
 /*  Feedback (LED + vibro)                                                    */
@@ -498,6 +503,7 @@ static void clauddey_handle_menu_input(ClauddeyApp* app, const InputEvent* ev) {
     } else if(ev->key == InputKeyOk) {
         app->screen = ClauddeyScreenSession;
         clauddey_log_push(app, clauddey_mode_log_label(app->mode));
+        clauddey_ensure_serial(app);
     }
 }
 
@@ -562,6 +568,13 @@ static void clauddey_handle_input(ClauddeyApp* app, const InputEvent* ev) {
     }
 }
 
+static void clauddey_ensure_serial(ClauddeyApp* app) {
+    if(app->serial_started) return;
+    clauddey_serial_start(app->serial);
+    app->serial_started = true;
+    FURI_LOG_I(TAG, "CDC worker started");
+}
+
 /* -------------------------------------------------------------------------- */
 /*  App lifecycle                                                             */
 /* -------------------------------------------------------------------------- */
@@ -572,6 +585,7 @@ static ClauddeyApp* clauddey_app_alloc(void) {
     app->screen = ClauddeyScreenMenu;
     app->running = true;
     app->host_connected = false;
+    app->serial_started = false;
     memset(&app->status, 0, sizeof(app->status));
     app->last_feedback_status = ClauddeyStatusIdle;
     app->last_feedback_agent = ClauddeyAgentNone;
@@ -609,13 +623,24 @@ static void clauddey_app_free(ClauddeyApp* app) {
 int32_t clauddey_app(void* p) {
     UNUSED(p);
     ClauddeyApp* app = clauddey_app_alloc();
-    clauddey_serial_start(app->serial);
-    FURI_LOG_I(TAG, "started");
+    const uint32_t boot_tick = furi_get_tick();
+    FURI_LOG_I(TAG, "started (CDC deferred %u ms)", (unsigned)CLAUDDEY_CDC_DEFER_MS);
 
     ClauddeyEvent event;
     while(app->running) {
         /* 100 ms poll keeps Back/redraw snappy if the queue is quiet. */
         FuriStatus st = furi_message_queue_get(app->events, &event, 100);
+
+        /*
+         * Dual-CDC re-enumerates USB. If we switch immediately, Windows
+         * ufbt launch still holds COM5 and dies with ClearCommError.
+         * Wait out the installer, or start as soon as the user opens a session.
+         */
+        if(!app->serial_started &&
+           ((furi_get_tick() - boot_tick) >= CLAUDDEY_CDC_DEFER_MS)) {
+            clauddey_ensure_serial(app);
+        }
+
         if(st != FuriStatusOk) continue;
 
         furi_mutex_acquire(app->mutex, FuriWaitForever);
