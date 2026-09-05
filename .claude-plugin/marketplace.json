@@ -1,0 +1,15 @@
+{
+  "name": "clauddey",
+  "owner": { "name": "DasVR" },
+  "plugins": [
+    {
+      "name": "clauddey",
+      "description": "Flipper Zero companion for Claude Code",
+      "source": {
+        "source": "git-subdir",
+        "url": "https://github.com/DasVR/Clauddey.git",
+        "path": "plugin"
+      }
+    }
+  ]
+}

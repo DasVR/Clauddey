@@ -1,0 +1,15 @@
+{
+  "name": "clauddey",
+  "description": "Physical companion for Claude Code / Cursor: a Flipper Zero FAP plus a Python host bridge, now with real Claude Code hook integration.",
+  "version": "0.1.0",
+  "author": {
+    "name": "DasVR"
+  },
+  "repository": "https://github.com/DasVR/Clauddey",
+  "keywords": [
+    "flipper-zero",
+    "claude-code",
+    "notifications",
+    "remote-control"
+  ]
+}
